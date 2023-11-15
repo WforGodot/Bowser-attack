@@ -5,7 +5,7 @@ import win32process
 import subprocess
 import time
 import keyboard
-from PIL import ImageGrab
+from PIL import ImageGrab, Image
 from example_agent import Agent
 from helper.scaling import adjust_for_scaling, get_scaling_factor
 import logging
@@ -24,6 +24,8 @@ class Controller:
         self.agent = agent_class(agent_params)  # Initialize the Agent
         self.controller_params = controller_params
         self.scaling_factor = get_scaling_factor()
+        self.screenshot_folder = Path('screenshots')
+        self.dimensions = (800, 800)
 
     def open_chrome(self):
         chrome_path = self.controller_params.get('chrome_path', "C:/Program Files/Google/Chrome/Application/chrome.exe") # Adjust as necessary
@@ -82,12 +84,16 @@ class Controller:
             return win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd)
 
         # Try to use the current handle
+
+        x, y = self.dimensions
+        screen_x, screen_y = adjust_for_scaling((x, y), self.scaling_factor)
+
         if is_valid_window(self.hwnd):
             try:
                 win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
                 win32gui.SetForegroundWindow(self.hwnd)
                 # Resize to 1024x1024 and move to the top left corner
-                win32gui.MoveWindow(self.hwnd, 0, 0, 1024, 1024, True)
+                win32gui.MoveWindow(self.hwnd, 0, 0, screen_x, screen_y, True)
             except Exception as e:
                 logging.error(f"Failed to bring the window to the foreground: {e}")
                 self.hwnd = None  # Invalidate the handle so it finds a new one
@@ -99,7 +105,7 @@ class Controller:
                 self.hwnd = self.chrome_windows[0][0]  # Use the oldest window
                 win32gui.SetForegroundWindow(self.hwnd)
                 # Resize to 1024x1024 and move to the top left corner
-                win32gui.MoveWindow(self.hwnd, 0, 0, 1024, 1024, True)
+                win32gui.MoveWindow(self.hwnd, 0, 0, screen_x, screen_y, True)
             else:
                 logging.error("No Chrome windows found.")
 
@@ -137,31 +143,37 @@ class Controller:
                 # Adjust the coordinates for scaling
                 rect = adjust_for_scaling(rect, self.scaling_factor)
                 image = ImageGrab.grab(rect)
-
-                self.screenshots.append(image)
-                
-                # When 10 screenshots have been taken
-                if len(self.screenshots) == 10:
-                    # Call the agent's step function
-                    actions = self.agent.step(self.screenshots)
-                    
-                    # Perform the actions returned by the agent
-                    self.perform_actions(actions)
-                    
-                    # Save the 10th screenshot
-                    screenshot_folder = Path('screenshots')
-                    screenshot_folder.mkdir(exist_ok=True)
-                    screenshot_path = screenshot_folder / f'screenshot_{int(time.time())}.png'
-                    self.screenshots[-1].save(screenshot_path)
-                    logging.info("Saved %s", screenshot_path)
-                    
-                    # Clear the screenshots list
-                    self.screenshots.clear()
-                        
+                image_resized = image.resize(self.dimensions, Image.ANTIALIAS)
+                return image_resized
             else:
                 logging.error("Window is not in the foreground.")
                 self.mode = 'paused'
 
+    def screenshot_wrapped(self):
+        image = self.screenshot()
+        self.screenshots.append(image)
+        
+        # When 10 screenshots have been taken
+        if len(self.screenshots) == 5:
+            # Call the agent's step function
+            actions = self.agent.step(self.screenshots)
+
+            # Perform the actions returned by the agent
+            self.perform_actions(actions)
+            
+            # Save the 10th screenshot
+            self.save_screenshot(self.screenshots[-1])
+            
+            # Clear the screenshots list
+            self.screenshots.clear()
+    
+    def save_screenshot(self, image):
+
+        self.screenshot_folder.mkdir(exist_ok=True)
+        screenshot_path = self.screenshot_folder / f'screenshot_{int(time.time())}.png'
+        image.save(screenshot_path)
+        logging.info("Saved %s", screenshot_path)
+                        
     def on_press(self, event):
         if event.name == 'f10':
             self.mode = 'recording'
@@ -173,10 +185,14 @@ class Controller:
             self.mode = 'paused'
         elif event.name == 'f9':
             self.stop()
+        elif event.name == 'f8':
+            image = self.screenshot()
+            self.save_screenshot(image)
 
     def start(self):
         keyboard.on_press(self.on_press)
         self.open_chrome()
+        self.bring_to_foreground_and_resize()
 
         try:
             while True:
