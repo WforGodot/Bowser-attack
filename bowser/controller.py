@@ -7,12 +7,16 @@ import time
 import keyboard
 from PIL import ImageGrab, Image
 from example_agent import Agent
-from helper.scaling import adjust_for_scaling, get_scaling_factor
+from helper.scaling import adjust_for_scaling, get_scaling_factor, hex_to_rgb, apply_tolerance
+from helper.windows import get_active_window_title, find_chrome_tab_by_title, switch_to_active_tab
 import logging
 from pathlib import Path
 import pyautogui
 import numpy as np
 import cv2
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.options import Options as ChromeOptions
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -28,36 +32,25 @@ class Controller:
         self.scaling_factor = get_scaling_factor()
         self.screenshot_folder = Path('screenshots')
         self.dimensions = (800, 800)
+        self.driver = None  # Selenium driver
+        self.max_inference = 20  # maximum number of steps per f10 press
+        self.inference_count = 0  # counter for number of steps taken
 
     def open_chrome(self):
-        chrome_path = self.controller_params.get('chrome_path', "C:/Program Files/Google/Chrome/Application/chrome.exe") # Adjust as necessary
+        chrome_options = ChromeOptions()
+        # Add any specific options you need here, e.g., headless mode, specific profile
+
+        chrome_service = ChromeService(executable_path="path/to/chromedriver")
         try:
-            proc = subprocess.Popen([chrome_path])
-            logging.info("Chrome opened with PID: %s", proc.pid)
-            # ...
-        except FileNotFoundError:
-            logging.error("Chrome executable not found at path: %s", chrome_path)
+            self.driver = webdriver.Chrome()
+            logging.info("Chrome opened with WebDriver")
+        except Exception as e:
+            logging.error(f"Failed to open Chrome with WebDriver: {e}")
             # Handle the error, maybe exit the script
         time.sleep(5)  # Wait for the window to open
 
-        def enum_window_callback(hwnd, lParam): 
-            """Check if the given window belongs to the Chrome process started."""
-            try:
-                _, window_pid = win32process.GetWindowThreadProcessId(hwnd)
-                if window_pid == lParam:
-                    self.hwnd = hwnd
-                    return False
-            except Exception as e:
-                logging.error(f"EnumWindows encountered an error: {e}")
-            return True
-
-        try:
-            win32gui.EnumWindows(enum_window_callback, proc.pid)
-        except Exception as e:
-            logging.error(f"Failed to enumerate windows: {e}")
-
-        if self.hwnd is None:
-            logging.error("Failed to find Chrome window handle.")
+        # Since we're using WebDriver, the window handling is different
+        self.hwnd = self.driver.current_window_handle
 
     def update_chrome_windows(self):
         """Update the list of Chrome window handles and sort by opening time."""
@@ -78,38 +71,16 @@ class Controller:
         self.chrome_windows.sort(key=lambda x: x[1])
 
     def bring_to_foreground_and_resize(self):
-        """Bring the window with the current handle to the foreground and resize it.
-           If the current handle is no longer valid, use the oldest Chrome window.
-        """
-        def is_valid_window(hwnd):
-            """Check if the window handle is valid and the window is visible."""
-            return win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd)
+        """Bring the Selenium-driven Chrome window to the foreground and resize it."""
 
-        # Try to use the current handle
-
-        x, y = self.dimensions
-        screen_x, screen_y = adjust_for_scaling((x, y), self.scaling_factor)
-
-        if is_valid_window(self.hwnd):
+        if self.driver:
             try:
-                win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
-                win32gui.SetForegroundWindow(self.hwnd)
-                # Resize to 1024x1024 and move to the top left corner
-                win32gui.MoveWindow(self.hwnd, 0, 0, screen_x, screen_y, True)
+                self.driver.set_window_rect(0, 0, *self.dimensions)
+                # self.driver.switch_to.window(self.hwnd)
             except Exception as e:
                 logging.error(f"Failed to bring the window to the foreground: {e}")
-                self.hwnd = None  # Invalidate the handle so it finds a new one
-
-        # If the current handle is invalid, find the oldest Chrome window
-        if not is_valid_window(self.hwnd):
-            self.update_chrome_windows()  # Refresh the Chrome windows list
-            if self.chrome_windows:
-                self.hwnd = self.chrome_windows[0][0]  # Use the oldest window
-                win32gui.SetForegroundWindow(self.hwnd)
-                # Resize to 1024x1024 and move to the top left corner
-                win32gui.MoveWindow(self.hwnd, 0, 0, screen_x, screen_y, True)
-            else:
-                logging.error("No Chrome windows found.")
+        else:
+            logging.error("No Chrome driver or window handle found.")
 
     def perform_actions(self, actions):
         """Perform actions returned by agent.step(), including mouse moves, clicks, and keyboard input."""
@@ -137,78 +108,94 @@ class Controller:
 
     def screenshot(self):
         """Take a screenshot of the window with the given handle."""
-        if self.hwnd is not None:
-            self.bring_to_foreground_and_resize()
-            # Verify the window is in the foreground
-            if win32gui.GetForegroundWindow() == self.hwnd:
-                rect = win32gui.GetWindowRect(self.hwnd)
-                # Adjust the coordinates for scaling
-                rect = adjust_for_scaling(rect, self.scaling_factor)
-                image = ImageGrab.grab(rect)
-                image_resized = image.resize(self.dimensions, Image.ANTIALIAS)
-                return image_resized
-            else:
-                logging.error("Window is not in the foreground.")
-                self.mode = 'paused'  
+        self.bring_to_foreground_and_resize()
+        # Verify the window is in the foreground
+            # Adjust the coordinates for scaling
+        rect = adjust_for_scaling(self.dimensions, self.scaling_factor)
+        image = ImageGrab.grab((0, 0, *rect))
+        image_resized = image.resize(self.dimensions) #, Image.ANTIALIAS)
+        return image_resized
 
-    def hex_to_rgb(hex_color):
-        """Convert hexadecimal color to RGB."""
-        hex_color = hex_color.lstrip('#')
-        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
-    def apply_tolerance(color, tolerance):
-        """Apply tolerance to each element of the color."""
-        return [[max(c - tolerance, 0), min(c + tolerance, 255)] for c in color]
+    def find_top_left_of_viewport(self):
 
-    def find_square(image, square_color="#7BEA2D", tolerance=10):
-        # Convert the image from PIL format to an OpenCV image
-        image_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        # Open the HTML file in the browser
+        html_file_path = 'file://' + os.path.join(os.getcwd(), 'bowser/helper/green.html')
+        self.driver.get(html_file_path)
 
-        # Convert square_color from hex to RGB and then apply tolerance
-        rgb_color = hex_to_rgb(square_color)
-        rgb_lower, rgb_upper = zip(*apply_tolerance(rgb_color, tolerance))
+        # Take a screenshot
+        screenshot_path = 'screenshot.png'
+        image = self.screenshot()
+        image.save(screenshot_path)
 
-        # Convert the lower and upper bounds from RGB to HSV
-        hsv_lower = cv2.cvtColor(np.uint8([[rgb_lower]]), cv2.COLOR_RGB2HSV)[0][0]
-        hsv_upper = cv2.cvtColor(np.uint8([[rgb_upper]]), cv2.COLOR_RGB2HSV)[0][0]
+        # Process the screenshot to find the green area
+        image = cv2.imread(screenshot_path)
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-        # Convert the image from BGR to HSV for better color segmentation
-        image_hsv = cv2.cvtColor(image_cv, cv2.COLOR_BGR2HSV)
+        # Define the color range for green in HSV
+        lower_green = np.array([45, 100, 100])  # Adjusted range
+        upper_green = np.array([75, 255, 255])
 
-        # Find the colors within the specified boundaries and apply the mask
-        mask = cv2.inRange(image_hsv, hsv_lower, hsv_upper)
+        # Create a mask for green color
+        mask = cv2.inRange(hsv, lower_green, upper_green)
 
-        # Find contours in the mask
+        # Find contours
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # If no contours are found, return False
-        if not contours:
-            return False
+        if contours:
+            # Assuming the largest contour is the green area
+            c = max(contours, key=cv2.contourArea)
+            x, y, w, h = cv2.boundingRect(c)
+            return (x, y)
+        else:
+            return None
 
-        # Assume the first contour is the square
-        x, y, w, h = cv2.boundingRect(contours[0])
+    def screenshot_and_dom(self):
+        """Take a screenshot and get the current DOM, then send both to the agent."""
+        # Ensure the window is in the foreground and at the correct size
+        # Retrieve all window handles
 
-        # Return the top-left position of the square
-        return (x, y)
+        x = time.time()
+        switch_to_active_tab(self.driver)
 
-    def screenshot_wrapped(self):
+        # Switch to the current window handle (active tab)
+
+        self.bring_to_foreground_and_resize()
+        
+        # Take a screenshot
         image = self.screenshot()
-        self.screenshots.append(image)
         
+        # Get the current DOM
+        dom = self.driver.page_source
         
-        # When 10 screenshots have been taken
-        if len(self.screenshots) == 5:
-            # Call the agent's step function
-            actions = self.agent.step(self.screenshots)
-
+        # Append the screenshot to the screenshots list
+        self.screenshots.append((image, dom))
+        
+        # When 5 pairs of screenshots and DOMs have been taken
+        if len(self.screenshots) == 1:
+            # Call the agent's step function with both the screenshot and the DOM
+            actions = self.agent.step(self.screenshots, mode = self.mode)
+            
             # Perform the actions returned by the agent
             self.perform_actions(actions)
             
-            # Save the 10th screenshot
-            self.save_screenshot(self.screenshots[-1])
+            # Save the last screenshot and DOM
+            # self.save_screenshot(self.screenshots[-1][0])
+            # self.save_dom(self.screenshots[-1][1])
             
             # Clear the screenshots list
             self.screenshots.clear()
+        
+        return (image, dom)
+
+    def save_dom(self, dom):
+        """Save the DOM to a file."""
+        dom_folder = self.screenshot_folder / 'dom'
+        dom_folder.mkdir(exist_ok=True)
+        dom_path = dom_folder / f'dom_{int(time.time())}.html'
+        with open(dom_path, 'w', encoding='utf-8') as file:
+            file.write(dom)
+        logging.info("Saved %s", dom_path)
     
     def save_screenshot(self, image):
 
@@ -229,18 +216,28 @@ class Controller:
         elif event.name == 'f9':
             self.stop()
         elif event.name == 'f8':
-            image = self.screenshot()
-            self.save_screenshot(image)
+            image = self.screenshot_and_dom()
+            self.save_screenshot(image[0])
+            self.save_dom(image[1])
 
     def start(self):
         keyboard.on_press(self.on_press)
         self.open_chrome()
         self.bring_to_foreground_and_resize()
+        self.viewport = self.find_top_left_of_viewport()
+        print(self.viewport)
 
         try:
             while True:
-                if self.mode != 'paused':
-                    self.screenshot()
+                if self.mode == 'recording':
+                    self.screenshot_and_dom()  # This is the updated line
+                
+                if self.mode == 'inference':
+                    self.screenshot_and_dom()  # This is the updated line
+                    self.inference_count += 1
+                    if self.inference_count >= self.max_inference:
+                        self.mode = 'paused'
+                        self.inference_count = 0
                 time.sleep(0.1)  # Rest for a bit to not overload the system
         except KeyboardInterrupt:
             print("Exiting the program.")
