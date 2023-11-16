@@ -11,6 +11,8 @@ from helper.scaling import adjust_for_scaling, get_scaling_factor
 import logging
 from pathlib import Path
 import pyautogui
+import numpy as np
+import cv2
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -147,11 +149,52 @@ class Controller:
                 return image_resized
             else:
                 logging.error("Window is not in the foreground.")
-                self.mode = 'paused'
+                self.mode = 'paused'  
+
+    def hex_to_rgb(hex_color):
+        """Convert hexadecimal color to RGB."""
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+    def apply_tolerance(color, tolerance):
+        """Apply tolerance to each element of the color."""
+        return [[max(c - tolerance, 0), min(c + tolerance, 255)] for c in color]
+
+    def find_square(image, square_color="#7BEA2D", tolerance=10):
+        # Convert the image from PIL format to an OpenCV image
+        image_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+        # Convert square_color from hex to RGB and then apply tolerance
+        rgb_color = hex_to_rgb(square_color)
+        rgb_lower, rgb_upper = zip(*apply_tolerance(rgb_color, tolerance))
+
+        # Convert the lower and upper bounds from RGB to HSV
+        hsv_lower = cv2.cvtColor(np.uint8([[rgb_lower]]), cv2.COLOR_RGB2HSV)[0][0]
+        hsv_upper = cv2.cvtColor(np.uint8([[rgb_upper]]), cv2.COLOR_RGB2HSV)[0][0]
+
+        # Convert the image from BGR to HSV for better color segmentation
+        image_hsv = cv2.cvtColor(image_cv, cv2.COLOR_BGR2HSV)
+
+        # Find the colors within the specified boundaries and apply the mask
+        mask = cv2.inRange(image_hsv, hsv_lower, hsv_upper)
+
+        # Find contours in the mask
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # If no contours are found, return False
+        if not contours:
+            return False
+
+        # Assume the first contour is the square
+        x, y, w, h = cv2.boundingRect(contours[0])
+
+        # Return the top-left position of the square
+        return (x, y)
 
     def screenshot_wrapped(self):
         image = self.screenshot()
         self.screenshots.append(image)
+        
         
         # When 10 screenshots have been taken
         if len(self.screenshots) == 5:
