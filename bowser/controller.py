@@ -9,6 +9,9 @@ from PIL import ImageGrab, Image
 from example_agent import Agent
 from helper.scaling import adjust_for_scaling, get_scaling_factor, hex_to_rgb, apply_tolerance
 from helper.windows import get_active_window_title, find_chrome_tab_by_title, switch_to_active_tab
+from helper.dom import collect_element_info
+from helper.dom_parser import build_tree
+from helper.tree_gui import TreeDisplayApp
 import logging
 from pathlib import Path
 import pyautogui
@@ -17,6 +20,7 @@ import cv2
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options as ChromeOptions
+import json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -89,10 +93,10 @@ class Controller:
             # Convert screen position based on scaling factor
             screen_x, screen_y = adjust_for_scaling((x, y), self.scaling_factor)
             # Get the current window position
-            rect = win32gui.GetWindowRect(self.hwnd)
+            
             # Offset the mouse position by the window's top left corner, taking scaling into account
-            absolute_x = rect[0] + screen_x
-            absolute_y = rect[1] + screen_y
+            absolute_x = screen_x
+            absolute_y = screen_y
             # Move the mouse to the specified coordinates
             pyautogui.moveTo(absolute_x, absolute_y)
 
@@ -166,7 +170,8 @@ class Controller:
         image = self.screenshot()
         
         # Get the current DOM
-        dom = self.driver.page_source
+        dom = collect_element_info(self.driver)
+        print(dom)
         
         # Append the screenshot to the screenshots list
         self.screenshots.append((image, dom))
@@ -193,8 +198,8 @@ class Controller:
         dom_folder = self.screenshot_folder / 'dom'
         dom_folder.mkdir(exist_ok=True)
         dom_path = dom_folder / f'dom_{int(time.time())}.html'
-        with open(dom_path, 'w', encoding='utf-8') as file:
-            file.write(dom)
+        with open(dom_path, 'w', encoding='utf-8') as json_file:
+            json.dump(dom, json_file, indent=4)
         logging.info("Saved %s", dom_path)
     
     def save_screenshot(self, image):
@@ -214,11 +219,14 @@ class Controller:
         elif event.name == 'f12':
             self.mode = 'paused'
         elif event.name == 'f9':
-            self.stop()
+            self.mode = 'paused'
         elif event.name == 'f8':
             image = self.screenshot_and_dom()
             self.save_screenshot(image[0])
             self.save_dom(image[1])
+            x = build_tree(image[1])
+            TreeDisplayApp(x)
+            
 
     def start(self):
         keyboard.on_press(self.on_press)
