@@ -12,6 +12,7 @@ from helper.windows import get_active_window_title, find_chrome_tab_by_title, sw
 from helper.dom import collect_element_info
 from helper.dom_parser import build_tree
 from helper.tree_gui import TreeDisplayApp
+from helper.visualize_elements import visualize_dom_tree
 import logging
 from pathlib import Path
 import pyautogui
@@ -20,7 +21,14 @@ import cv2
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import json
+import base64
+import tkinter as tk
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -112,6 +120,10 @@ class Controller:
 
     def screenshot(self):
         """Take a screenshot of the window with the given handle."""
+        switch_to_active_tab(self.driver)
+
+        # Switch to the current window handle (active tab)
+
         self.bring_to_foreground_and_resize()
         # Verify the window is in the foreground
             # Adjust the coordinates for scaling
@@ -119,7 +131,54 @@ class Controller:
         image = ImageGrab.grab((0, 0, *rect))
         image_resized = image.resize(self.dimensions) #, Image.ANTIALIAS)
         return image_resized
+    
+   
+    def save_canvas_screenshot(self):
+        
+        switch_to_active_tab(self.driver)
+        self.bring_to_foreground_and_resize()
+        # Find all iframe elements on the page
+        # Initialize an empty list to hold all found canvas elements
+        all_canvas_elements = []
 
+        # Try to find iframes
+        try:
+            iframes = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_all_elements_located((By.TAG_NAME, 'iframe'))
+            )
+        except TimeoutException:
+            logging.warning("No iframes found within the timeout period.")
+            iframes = []
+
+        # Process each iframe to find canvas elements
+        for iframe in iframes:
+            self.driver.switch_to.frame(iframe)
+            canvas_elements = self.driver.find_elements(By.TAG_NAME, 'canvas')
+            all_canvas_elements.extend(canvas_elements)  # Add the found canvas elements to the list
+            self.driver.switch_to.parent_frame()  # Don't forget to switch back to the parent frame
+
+        # If no canvas elements found in iframes, look in the main page
+        
+        canvas_elements = self.driver.find_elements(By.TAG_NAME, 'canvas')
+        all_canvas_elements.extend(canvas_elements)
+
+        # Process all collected canvas elements
+        for index, canvas in enumerate(all_canvas_elements):
+            # Get the canvas element as a PNG base64 string
+            canvas_base64 = self.driver.execute_script(
+                "return arguments[0].toDataURL('image/png').substring(21);", canvas
+            )
+            # Decode the base64 string and write the image data to a file
+            canvas_png = base64.b64decode(canvas_base64)
+            timestamp = int(time.time())
+            canvas_filename = f'canvas_{timestamp}_{index}.png'
+            canvas_path = Path(self.screenshot_folder) / canvas_filename
+            with open(canvas_path, 'wb') as f:
+                f.write(canvas_png)
+            logging.info(f"Saved {canvas_path}")
+
+        # Finally, ensure we switch back to the main content
+        self.driver.switch_to.default_content()
 
     def find_top_left_of_viewport(self):
 
@@ -160,21 +219,21 @@ class Controller:
         # Retrieve all window handles
 
         x = time.time()
-        switch_to_active_tab(self.driver)
 
-        # Switch to the current window handle (active tab)
-
-        self.bring_to_foreground_and_resize()
         
         # Take a screenshot
         image = self.screenshot()
         
         # Get the current DOM
         dom = collect_element_info(self.driver)
-        print(dom)
+        dom_tree = build_tree(dom)
         
         # Append the screenshot to the screenshots list
         self.screenshots.append((image, dom))
+
+        visualization = visualize_dom_tree(image.copy(), dom_tree, self.viewport)
+        visualization.show()
+
         
         # When 5 pairs of screenshots and DOMs have been taken
         if len(self.screenshots) == 1:
@@ -191,7 +250,7 @@ class Controller:
             # Clear the screenshots list
             self.screenshots.clear()
         
-        return (image, dom)
+        return (image, dom, visualization)
 
     def save_dom(self, dom):
         """Save the DOM to a file."""
@@ -218,22 +277,24 @@ class Controller:
             self.ss_count = 0  # Reset screenshot counter
         elif event.name == 'f12':
             self.mode = 'paused'
-        elif event.name == 'f9':
-            self.mode = 'paused'
         elif event.name == 'f8':
             image = self.screenshot_and_dom()
             self.save_screenshot(image[0])
             self.save_dom(image[1])
-            x = build_tree(image[1])
-            TreeDisplayApp(x)
+            #x = build_tree(image[1])
+            #TreeDisplayApp(x)
+        elif event.name == 'f9':
+            self.save_canvas_screenshot()
+        
             
-
+            
     def start(self):
         keyboard.on_press(self.on_press)
         self.open_chrome()
         self.bring_to_foreground_and_resize()
         self.viewport = self.find_top_left_of_viewport()
         print(self.viewport)
+        self.create_ui()
 
         try:
             while True:
@@ -259,6 +320,36 @@ class Controller:
 
         # This will break the main loop and exit the program
         raise SystemExit
+    
+    def create_ui(self):
+        root = tk.Tk()
+        root.title("Glossary and Summary")
+        root.overrideredirect(True)
+        root.attributes('-topmost', True)  # Keeps the window always on top
+
+        # Set a specific background color for transparency
+        transparent_color = 'black'
+        text_bg = 'black'  # Use the same color for the text widget background
+        root.config(bg=transparent_color)
+        root.attributes('-transparentcolor', transparent_color)
+
+        window_width = 400
+        window_height = 600
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        x_coordinate = screen_width - window_width
+        y_coordinate = (screen_height - window_height) // 2
+        root.geometry(f"{window_width}x{window_height}+{x_coordinate}+{y_coordinate}")
+
+        text = tk.Text(root, fg="red", bg=text_bg, insertbackground="black", wrap=tk.WORD, bd=0)
+        glossary = "F8: Take a screenshot and display the DOM tree\n" \
+                     "F9: Take a screenshot of the canvas elements\n" \
+                        "F10: Start recording\n" \
+                        "F11: Start inference\n" \
+                        "F12: Pause\n"
+        text.insert(tk.END, glossary)
+        text.pack(expand=True, fill=tk.BOTH)
+        root.mainloop()
 
 
 # Create a Controller instance and start it

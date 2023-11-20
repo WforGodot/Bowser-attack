@@ -24,6 +24,7 @@ def switch_to_active_tab(driver):
     """Switch to the active tab by matching the window title with the active window title."""
     # Get the title of the current active window using win32gui
     active_window_title = get_active_window_title()
+    print(active_window_title)
     if driver.title != active_window_title.replace(" - Google Chrome", ""):
         # Check each window that Selenium has a handle for
         for handle in driver.window_handles[::-1]:

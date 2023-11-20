@@ -1,4 +1,6 @@
 
+
+# Collect DOM information from browser
 def collect_element_info(driver):
     bounding_boxes_script = """
 function getDirectTextContent(element) {
@@ -30,6 +32,10 @@ function element_type(element) {
 
     var labelContent;
     if (element.tagName.toLowerCase() === 'img') {
+      labelContent = 'image';
+    } else if (element.tagName.toLowerCase() === 'canvas') {
+      labelContent = 'canvas';
+    } else if (element.tagName.toLowerCase() === 'svg') {
       labelContent = 'image';
     } else if (containsText) {
       // Check if the element itself contains text
