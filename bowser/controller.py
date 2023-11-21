@@ -7,12 +7,13 @@ import time
 import keyboard
 from PIL import ImageGrab, Image
 from example_agent import Agent
-from helper.scaling import adjust_for_scaling, get_scaling_factor, hex_to_rgb, apply_tolerance
-from helper.windows import get_active_window_title, find_chrome_tab_by_title, switch_to_active_tab
+from helper.scaling import adjust_for_scaling, get_scaling_factor, calculate_dimensions, get_intersection
+from helper.windows import switch_to_active_tab
 from helper.dom import collect_element_info
 from helper.dom_parser import build_tree
 from helper.tree_gui import TreeDisplayApp
 from helper.visualize_elements import visualize_dom_tree
+from helper.windows_area import get_window_area
 import logging
 from pathlib import Path
 import pyautogui
@@ -21,7 +22,6 @@ import cv2
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -43,10 +43,12 @@ class Controller:
         self.controller_params = controller_params
         self.scaling_factor = get_scaling_factor()
         self.screenshot_folder = Path('screenshots')
-        self.dimensions = (800, 800)
+        self.window_dimensions = (0, 0, 800, 800)
         self.driver = None  # Selenium driver
         self.max_inference = 20  # maximum number of steps per f10 press
         self.inference_count = 0  # counter for number of steps taken
+        self.window_area = 0
+        self.viewport = None
 
     def open_chrome(self):
         chrome_options = ChromeOptions()
@@ -87,7 +89,7 @@ class Controller:
 
         if self.driver:
             try:
-                self.driver.set_window_rect(0, 0, *self.dimensions)
+                self.driver.set_window_rect(*self.window_dimensions)
                 # self.driver.switch_to.window(self.hwnd)
             except Exception as e:
                 logging.error(f"Failed to bring the window to the foreground: {e}")
@@ -127,9 +129,9 @@ class Controller:
         self.bring_to_foreground_and_resize()
         # Verify the window is in the foreground
             # Adjust the coordinates for scaling
-        rect = adjust_for_scaling(self.dimensions, self.scaling_factor)
-        image = ImageGrab.grab((0, 0, *rect))
-        image_resized = image.resize(self.dimensions) #, Image.ANTIALIAS)
+        rect = adjust_for_scaling(self.window_dimensions, self.scaling_factor)
+        image = ImageGrab.grab(rect)
+        image_resized = image.resize(calculate_dimensions(*self.window_dimensions)) #, Image.ANTIALIAS)
         return image_resized
     
    
@@ -212,6 +214,8 @@ class Controller:
             return (x, y)
         else:
             return None
+    
+
 
     def screenshot_and_dom(self):
         """Take a screenshot and get the current DOM, then send both to the agent."""
@@ -269,24 +273,51 @@ class Controller:
         logging.info("Saved %s", screenshot_path)
                         
     def on_press(self, event):
-        if event.name == 'f10':
-            self.mode = 'recording'
-            self.ss_count = 0  # Reset screenshot counter
-        elif event.name == 'f11':
-            self.mode = 'inference'
-            self.ss_count = 0  # Reset screenshot counter
-        elif event.name == 'f12':
-            self.mode = 'paused'
-        elif event.name == 'f8':
-            image = self.screenshot_and_dom()
-            self.save_screenshot(image[0])
-            self.save_dom(image[1])
-            #x = build_tree(image[1])
-            #TreeDisplayApp(x)
-        elif event.name == 'f9':
-            self.save_canvas_screenshot()
-        
+        """Handle key press events."""
+        if keyboard.is_pressed('alt'):
+            if event.name == 'f1':
+                self.alt_f1()
             
+            elif event.name == 'f9':
+                self.alt_f9()  # Select area
+            elif event.name == 'f8':
+                self.alt_f8()  # Screenshot and DOM
+            elif event.name == 'f10':
+                self.alt_f10()
+            elif event.name == 'f11':
+                self.alt_f11()
+            elif event.name == 'f12':
+                self.alt_f12()
+
+    def alt_f1(self):
+        self.window_area = self.window_dimensions
+
+    # Example function bindings
+    def alt_f8(self):
+        # Your code for F8 action
+        image = self.screenshot_and_dom()
+        self.save_screenshot(image[0])
+        self.save_dom(image[1])
+        #x = build_tree(image[1])
+        #TreeDisplayApp(x)
+
+    def update_window_area(self):
+        # Your code for F9 action
+        area = get_window_area()
+        self.window_area = get_intersection(area, self.window_dimensions, scaling_factor=self.scaling_factor)
+
+    def alt_f10(self):
+        # Your code for F10 action
+        self.mode = 'recording'
+        self.ss_count = 0  # Reset screenshot counter
+
+    def alt_f11(self):
+        self.mode = 'inference'
+        self.ss_count = 0  # Reset screenshot counter
+
+    def alt_f12(self):
+        # Your code for F12 action
+        self.mode = 'paused'
             
     def start(self):
         keyboard.on_press(self.on_press)
@@ -322,26 +353,23 @@ class Controller:
         raise SystemExit
     
     def create_ui(self):
-        root = tk.Tk()
-        root.title("Glossary and Summary")
-        root.overrideredirect(True)
-        root.attributes('-topmost', True)  # Keeps the window always on top
-
+        root2 = tk.Tk()
+        root2.title("Glossary and Summary")
+        root2.overrideredirect(True)
+        root2.attributes('-topmost', True)  # Keeps the window always on top
         # Set a specific background color for transparency
         transparent_color = 'black'
         text_bg = 'black'  # Use the same color for the text widget background
-        root.config(bg=transparent_color)
-        root.attributes('-transparentcolor', transparent_color)
-
+        root2.config(bg=transparent_color)
+        root2.attributes('-transparentcolor', transparent_color)
         window_width = 400
         window_height = 600
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
+        screen_width = root2.winfo_screenwidth()
+        screen_height = root2.winfo_screenheight()
         x_coordinate = screen_width - window_width
         y_coordinate = (screen_height - window_height) // 2
-        root.geometry(f"{window_width}x{window_height}+{x_coordinate}+{y_coordinate}")
-
-        text = tk.Text(root, fg="red", bg=text_bg, insertbackground="black", wrap=tk.WORD, bd=0)
+        root2.geometry(f"{window_width}x{window_height}+{x_coordinate}+{y_coordinate}")
+        text = tk.Text(root2, fg="red", bg=text_bg, insertbackground="black", wrap=tk.WORD, bd=0)
         glossary = "F8: Take a screenshot and display the DOM tree\n" \
                      "F9: Take a screenshot of the canvas elements\n" \
                         "F10: Start recording\n" \
@@ -349,7 +377,7 @@ class Controller:
                         "F12: Pause\n"
         text.insert(tk.END, glossary)
         text.pack(expand=True, fill=tk.BOTH)
-        root.mainloop()
+        root2.mainloop()
 
 
 # Create a Controller instance and start it
