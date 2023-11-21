@@ -3,6 +3,8 @@ import random
 
 def is_leaf(node):
     """Check if a node is a leaf."""
+    if not node:
+        return False
     return len(node.children) == 0
 
 
@@ -11,17 +13,27 @@ def get_color(depth, max_depth):
     if depth == max_depth:
         return (0, 0, 255)  # Blue for leaves
     else:
-        redness = int(255 - (depth / max_depth) * 255)
+        redness = int(255 - (depth / (max_depth + 1)) * 255)
         return (255, redness, redness)  # Shades of red for non-leaves
 
 def leaf_depth(node):
+    return 1
     """Determine the leaf depth of a node."""
-    if not node.children:
+    """if not node or node.children:
         return 1
-    return 1 + max(leaf_depth(child) for child in node.children)
+    try:
+        z = max(leaf_depth(child) for child in node.children)
 
+        return 1 + max(leaf_depth(child) for child in node.children)
+    except TypeError:
+        print(node.children)
+        return 1"""
+    
 def draw_boxes(image, node, viewport_offset, depth=0, max_depth=0):
     """Recursively draw bounding boxes on the image."""
+
+    if node is None:  # Check if the node is None
+        return image
     draw = ImageDraw.Draw(image)
     try:
         font = ImageFont.truetype("arial.ttf", 15)
@@ -55,7 +67,8 @@ def draw_boxes(image, node, viewport_offset, depth=0, max_depth=0):
 
     # Recursively draw boxes for children
     for child in node.children:
-        draw_boxes(image, child, viewport_offset, depth + 1, max_depth)
+        if child is not None:
+            draw_boxes(image, child, viewport_offset, depth + 1, max_depth)
 
     return image
 
@@ -63,7 +76,7 @@ def draw_boxes(image, node, viewport_offset, depth=0, max_depth=0):
 
 def get_max_depth(node, current_depth=0):
     """Determine the maximum depth of a node."""
-    if not node.children:
+    if not node or node.children:
         return current_depth
     return max(get_max_depth(child, current_depth + 1) for child in node.children)
 

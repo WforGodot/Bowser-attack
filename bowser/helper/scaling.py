@@ -23,7 +23,7 @@ def get_scaling_factor():
     scaling_factor = dpi / 96
     return scaling_factor
 
-def get_intersection(box1, box2, scaling_factor=1.25):
+def get_intersection(box1, box2):
     x1, y1, x2, y2 = box1
     x3, y3, x4, y4 = box2
 
@@ -39,7 +39,7 @@ def get_intersection(box1, box2, scaling_factor=1.25):
     if overlap_x1 < overlap_x2 and overlap_y1 < overlap_y2:
         # Adjust coordinates to be relative to box1's top left corner
         unscaled = (overlap_x1 - x1, overlap_y1 - y1, overlap_x2 - x1, overlap_y2 - y1)
-        return tuple(int(value / scaling_factor) for value in unscaled)
+        return unscaled
     else:
         # No overlap
         return None

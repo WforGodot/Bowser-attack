@@ -1,4 +1,4 @@
-- Prune tree to only contain elements in screenshot
+- Prune tree to only contain elements in screenshot {cm:2023-11-21} {h}
 - Get dom.py to work with iframes
 - Refine text areas - combine texts from different elements
 - Remove divs that only contain one element and dont have style, etc
@@ -7,4 +7,7 @@
 - Use canvas elements to improve heirarichal segmentation
 
 
-Screenshot should only return selected area
+Screenshot should only return selected area {cm:2023-11-21} {h}
+Update glossary to show window_area {cm:2023-11-22} {h}
+
+Record take ss on click

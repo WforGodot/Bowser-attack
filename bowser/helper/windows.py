@@ -55,8 +55,15 @@ def switch_to_active_tab(driver):
     #print(active_window_title)
     
     if active_window_title:
+        try: 
+            if driver.title == active_window_title.replace(" - Google Chrome", ""): 
+                print('already on tab with title "' + driver.title + '"')
+                return
+        except:
+            pass
+
         if driver.title != active_window_title.replace(" - Google Chrome", ""):
-        # Check each window that Selenium has a handle for
+            # Check each window that Selenium has a handle for
             for handle in driver.window_handles[::-1]:
                 # Switch to each window
                 driver.switch_to.window(handle)
@@ -68,5 +75,6 @@ def switch_to_active_tab(driver):
             else:
                 # If no tabs match, raise an exception or handle as needed
                 raise Exception("Active tab not found among Selenium's known tabs")
+
     else:
         raise Exception("Active window title not found")

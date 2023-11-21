@@ -10,7 +10,7 @@ from example_agent import Agent
 from helper.scaling import adjust_for_scaling, get_scaling_factor, calculate_dimensions, get_intersection
 from helper.windows import switch_to_active_tab
 from helper.dom import collect_element_info
-from helper.dom_parser import build_tree
+from helper.dom_parser import build_tree, crop_dom_tree, print_dom_tree
 from helper.tree_gui import TreeDisplayApp
 from helper.visualize_elements import visualize_dom_tree
 from helper.windows_area import get_window_area
@@ -42,13 +42,14 @@ class Controller:
         self.agent = agent_class(agent_params)  # Initialize the Agent
         self.controller_params = controller_params
         self.scaling_factor = get_scaling_factor()
-        self.screenshot_folder = Path('screenshots')
+        self.screenshot_folder = Path('screenshots2')
         self.window_dimensions = (0, 0, 800, 800)
         self.driver = None  # Selenium driver
         self.max_inference = 20  # maximum number of steps per f10 press
         self.inference_count = 0  # counter for number of steps taken
-        self.window_area = 0
-        self.viewport = None
+        self.window_area = self.window_dimensions
+        self.search_for_viewport = False
+        self.viewport = (7, 131)
 
     def open_chrome(self):
         chrome_options = ChromeOptions()
@@ -121,7 +122,7 @@ class Controller:
             keyboard.write(keyboard_input)
 
     def screenshot(self):
-        """Take a screenshot of the window with the given handle."""
+        """Take a screenshot of the window with the given handle and window area."""
         switch_to_active_tab(self.driver)
 
         # Switch to the current window handle (active tab)
@@ -131,9 +132,16 @@ class Controller:
             # Adjust the coordinates for scaling
         rect = adjust_for_scaling(self.window_dimensions, self.scaling_factor)
         image = ImageGrab.grab(rect)
-        image_resized = image.resize(calculate_dimensions(*self.window_dimensions)) #, Image.ANTIALIAS)
-        return image_resized
+        image_resized_and_cropped = image.resize(calculate_dimensions(*self.window_dimensions)).crop(self.window_area)
+        return image_resized_and_cropped
     
+    def get_dom(self):
+
+        dom = collect_element_info(self.driver)
+        dom_tree = build_tree(dom)
+        #dom_tree = crop_dom_tree(dom_tree, self.window_area, tolerance=10)
+        return dom_tree, dom
+
    
     def save_canvas_screenshot(self):
         
@@ -213,11 +221,11 @@ class Controller:
             x, y, w, h = cv2.boundingRect(c)
             return (x, y)
         else:
-            return None
+            return (7, 131)
     
 
 
-    def screenshot_and_dom(self):
+    def screenshot_and_dom(self, inference=False):
         """Take a screenshot and get the current DOM, then send both to the agent."""
         # Ensure the window is in the foreground and at the correct size
         # Retrieve all window handles
@@ -229,20 +237,22 @@ class Controller:
         image = self.screenshot()
         
         # Get the current DOM
-        dom = collect_element_info(self.driver)
-        dom_tree = build_tree(dom)
+        
+        dom_tree, dom = self.get_dom()
+        if not dom_tree:
+            print('xxx')
+        #print_dom_tree(dom_tree)
         
         # Append the screenshot to the screenshots list
-        self.screenshots.append((image, dom))
+        self.screenshots.append((image, dom_tree))
 
-        visualization = visualize_dom_tree(image.copy(), dom_tree, self.viewport)
-        visualization.show()
-
+        #visualization = visualize_dom_tree(image.copy(), dom_tree, self.viewport)
+        #visualization.show()
         
-        # When 5 pairs of screenshots and DOMs have been taken
+        # When x pairs of screenshots and DOMs have been taken
         if len(self.screenshots) == 1:
             # Call the agent's step function with both the screenshot and the DOM
-            actions = self.agent.step(self.screenshots, mode = self.mode)
+            actions = self.agent.step(self.screenshots, mode=inference)
             
             # Perform the actions returned by the agent
             self.perform_actions(actions)
@@ -254,7 +264,7 @@ class Controller:
             # Clear the screenshots list
             self.screenshots.clear()
         
-        return (image, dom, visualization)
+        return (image, dom_tree, dom)
 
     def save_dom(self, dom):
         """Save the DOM to a file."""
@@ -276,12 +286,11 @@ class Controller:
         """Handle key press events."""
         if keyboard.is_pressed('alt'):
             if event.name == 'f1':
-                self.alt_f1()
-            
+                self.reset_window_area()    
             elif event.name == 'f9':
-                self.alt_f9()  # Select area
+                self.update_window_area()
             elif event.name == 'f8':
-                self.alt_f8()  # Screenshot and DOM
+                self.alt_f8()  # Save screenshot and DOM
             elif event.name == 'f10':
                 self.alt_f10()
             elif event.name == 'f11':
@@ -289,22 +298,24 @@ class Controller:
             elif event.name == 'f12':
                 self.alt_f12()
 
-    def alt_f1(self):
+    def reset_window_area(self):
         self.window_area = self.window_dimensions
+        self.update_ui()
 
     # Example function bindings
     def alt_f8(self):
         # Your code for F8 action
         image = self.screenshot_and_dom()
         self.save_screenshot(image[0])
-        self.save_dom(image[1])
+        self.save_dom(image[2])
         #x = build_tree(image[1])
         #TreeDisplayApp(x)
 
     def update_window_area(self):
         # Your code for F9 action
         area = get_window_area()
-        self.window_area = get_intersection(area, self.window_dimensions, scaling_factor=self.scaling_factor)
+        self.window_area = get_intersection(self.window_dimensions, area)
+        self.update_ui()
 
     def alt_f10(self):
         # Your code for F10 action
@@ -323,17 +334,18 @@ class Controller:
         keyboard.on_press(self.on_press)
         self.open_chrome()
         self.bring_to_foreground_and_resize()
-        self.viewport = self.find_top_left_of_viewport()
+        if self.search_for_viewport:
+            self.viewport = self.find_top_left_of_viewport()
         print(self.viewport)
         self.create_ui()
 
         try:
             while True:
                 if self.mode == 'recording':
-                    self.screenshot_and_dom()  # This is the updated line
+                    self.screenshot_and_dom()
                 
                 if self.mode == 'inference':
-                    self.screenshot_and_dom()  # This is the updated line
+                    self.screenshot_and_dom(inference=True)
                     self.inference_count += 1
                     if self.inference_count >= self.max_inference:
                         self.mode = 'paused'
@@ -353,31 +365,38 @@ class Controller:
         raise SystemExit
     
     def create_ui(self):
-        root2 = tk.Tk()
-        root2.title("Glossary and Summary")
-        root2.overrideredirect(True)
-        root2.attributes('-topmost', True)  # Keeps the window always on top
+        self.ui_root = tk.Tk()
+        self.ui_root.title("Glossary and Summary")
+        self.ui_root.overrideredirect(True)
+        self.ui_root.attributes('-topmost', True)  # Keeps the window always on top
         # Set a specific background color for transparency
         transparent_color = 'black'
         text_bg = 'black'  # Use the same color for the text widget background
-        root2.config(bg=transparent_color)
-        root2.attributes('-transparentcolor', transparent_color)
+        self.ui_root.config(bg=transparent_color)
+        self.ui_root.attributes('-transparentcolor', transparent_color)
         window_width = 400
         window_height = 600
-        screen_width = root2.winfo_screenwidth()
-        screen_height = root2.winfo_screenheight()
+        screen_width = self.ui_root.winfo_screenwidth()
+        screen_height = self.ui_root.winfo_screenheight()
         x_coordinate = screen_width - window_width
         y_coordinate = (screen_height - window_height) // 2
-        root2.geometry(f"{window_width}x{window_height}+{x_coordinate}+{y_coordinate}")
-        text = tk.Text(root2, fg="red", bg=text_bg, insertbackground="black", wrap=tk.WORD, bd=0)
-        glossary = "F8: Take a screenshot and display the DOM tree\n" \
+        self.ui_root.geometry(f"{window_width}x{window_height}+{x_coordinate}+{y_coordinate}")
+        self.glossary_text = tk.Text(self.ui_root, fg="red", bg=text_bg, insertbackground="black", wrap=tk.WORD, bd=0)
+        self.glossary = "F8: Take a screenshot and display the DOM tree\n" \
                      "F9: Take a screenshot of the canvas elements\n" \
                         "F10: Start recording\n" \
                         "F11: Start inference\n" \
                         "F12: Pause\n"
-        text.insert(tk.END, glossary)
-        text.pack(expand=True, fill=tk.BOTH)
-        root2.mainloop()
+        self.glossary_text.insert(tk.END, self.glossary)
+        self.glossary_text.pack(expand=True, fill=tk.BOTH)
+        self.ui_root.mainloop()
+    
+    def update_ui(self):
+        """Update the UI with the latest screenshot and DOM."""
+        if self.ui_root:
+            self.glossary_text.delete('1.0', tk.END)
+            self.glossary_text.insert(tk.END, self.glossary + 'Window area: ' + str(self.window_area))
+            self.glossary_text.pack(expand=True, fill=tk.BOTH)
 
 
 # Create a Controller instance and start it
