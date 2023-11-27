@@ -9,6 +9,7 @@ class DOMNode:
         self.children = []
         self.attributes = info.get('attributes', {})  # Store all other attributes
         self.element_id = info.get('elementId', '')
+        self.parent = None
 
 
 def build_tree(node_info):
@@ -18,6 +19,7 @@ def build_tree(node_info):
     # Recursively build the tree for each child
         for child_info in node_info.get('children', []):
             child_node = build_tree(child_info)
+            child_node.parent = node
             node.children.append(child_node)
     
         return node
@@ -44,6 +46,7 @@ def print_dom_tree(node, depth=0):
     for child in node.children:
         print_dom_tree(child, depth + 1)
 
+
 def is_within_area(bounding_rect, area, tolerance=0):
     """
     Check if the bounding rectangle of a node is within the specified area.
@@ -57,33 +60,51 @@ def is_within_area(bounding_rect, area, tolerance=0):
     return (left + tolerance >= area_left and right - tolerance <= area_right and
             top + tolerance >= area_top and bottom - tolerance <= area_bottom)
 
+def delete_node(node):
+    """
+    Delete a node from the DOM tree.
+    """
+    if node.parent:
+        node.parent.children.remove(node)
+        # Add children to the parent
+        for child in node.children:
+            child.parent = node.parent
+            node.parent.children.append(child)
+    else:
+        pass
 
-def crop_dom_tree(dom_tree, window_area, tolerance=10):
+def traverse_dom_tree(node, func):
+    """
+    Traverse the DOM tree and apply a function to each node.
+    """
+    func(node)
+    for child in node.children:
+        traverse_dom_tree(child, func)
+
+def crop_dom_tree_by_area(root, window_area, tolerance=10):
     """
     Crop the DOM tree to only include nodes within the window_area with a given tolerance.
     """
-    # Check if the current node is within the window area
-    if is_within_area(dom_tree.bounding_rect, window_area, tolerance):
-        # Create a new node with the same data as the current node
-        cropped_node = DOMNode({
-            'tagName': dom_tree.tag_name,
-            'labelContent': dom_tree.label_content,
-            'boundingRect': dom_tree.bounding_rect,
-            'text': dom_tree.text,
-            'src': dom_tree.src,
-            'backgroundImage': dom_tree.background_image,
-            'attributes': dom_tree.attributes,
-            'elementId': dom_tree.element_id
-        })
+    def crop_node(node):
+        if not is_within_area(node.bounding_rect, window_area, tolerance):
+            delete_node(node)
+    
+    traverse_dom_tree(root, crop_node)
 
-        # Recursively crop the children and add them to the cropped node
-        cropped_children = [crop_dom_tree(child, window_area, tolerance) for child in dom_tree.children]
-        cropped_node.children = [child for child in cropped_children if child is not None]
+    return root
 
-        return cropped_node
-    else:
-        # Return None if the node is outside the window area
-        return None
+def crop_empty_divs(root):
+    """
+    Crop the DOM tree to only include nodes that only have one child.
+    """
+    def crop_node(node):
+        if node.tag_name == 'div' and len(node.children) <= 1:
+            delete_node(node)
+    
+    traverse_dom_tree(root, crop_node)
+
+    return root
+
 
 
 

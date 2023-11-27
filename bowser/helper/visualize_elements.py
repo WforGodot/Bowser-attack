@@ -73,12 +73,51 @@ def draw_boxes(image, node, viewport_offset, depth=0, max_depth=0):
     return image
 
 
+def draw_boxes_separately(image_list, node, viewport_offset, depth=0):
+    """Creates a list of images, each with bounding boxes of a certain depth"""
+
+    if node is None:  # Check if the node is None
+        return image_list
+    draw = ImageDraw.Draw(image_list[depth])
+    try:
+        font = ImageFont.truetype("arial.ttf", 15)
+    except IOError:
+        font = ImageFont.load_default()
+
+    # Determine the color for the current node
+    color = (0, 0, 255)
+
+    # Calculate leaf depth for bounding box adjustment
+
+    bounding_box = node.bounding_rect
+    if bounding_box:
+        left = bounding_box.get('left', 0) + viewport_offset[0]
+        top = bounding_box.get('top', 0) + viewport_offset[1]
+        right = bounding_box.get('right', 0) + viewport_offset[0]
+        bottom = bounding_box.get('bottom', 0) + viewport_offset[1]
+        draw.rectangle([left, top, right, bottom], outline=color, width=2)
+
+        text_position = (left, top)
+        element_info = node.label_content + str(node.src)+ str(node.background_image)
+        draw.text(text_position, element_info, fill=color, font=font)
+
+    # Recursively draw boxes for children
+    if depth < len(image_list) - 1:
+        for child in node.children:
+            if child is not None:
+                draw_boxes_separately(image_list, child, viewport_offset, depth + 1)
+
+    return image_list
+
+def draw_boxes_wrapped(image, node, viewport_offset, max_depth=10):
+    image_list = [image.copy() for i in range(max_depth)]
+    image_list = draw_boxes_separately(image_list, node, viewport_offset)
+    return image_list
+
 
 def get_max_depth(node, current_depth=0):
     """Determine the maximum depth of a node."""
-    if not node or node.children:
-        return current_depth
-    return max(get_max_depth(child, current_depth + 1) for child in node.children)
+    return 1
 
 def visualize_dom_tree(image, dom_tree, viewport_offset=(0,0)):
     max_depth = get_max_depth(dom_tree)

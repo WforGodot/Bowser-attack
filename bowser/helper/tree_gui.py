@@ -15,6 +15,9 @@ class TreeDisplayApp:
             'Label Content',
             'Attributes',
             'Bounding Box'
+            'Image'
+            'Src'
+            'Background Image'
         ])
 
         # Build tree
@@ -43,9 +46,13 @@ class TreeDisplayApp:
         label_content_item = QStandardItem(node.label_content)
         attributes_item = QStandardItem(", ".join(f"{k}: {v}" for k, v in node.attributes.items()))
         bounding_box_item = QStandardItem(bounding_box_str)
+        text_item = QStandardItem(node.text)
+        src_item = QStandardItem(node.src)
+        background_image_item = QStandardItem(node.background_image)
+
         
         # Append the new row to the parent item
-        parent.appendRow([item, label_content_item, attributes_item, bounding_box_item])
+        parent.appendRow([item, label_content_item, attributes_item, bounding_box_item, text_item, src_item, background_image_item])
         
         # Recursively build the tree for each child node
         for child_node in node.children:

@@ -10,9 +10,9 @@ from example_agent import Agent
 from helper.scaling import adjust_for_scaling, get_scaling_factor, calculate_dimensions, get_intersection
 from helper.windows import switch_to_active_tab
 from helper.dom import collect_element_info
-from helper.dom_parser import build_tree, crop_dom_tree, print_dom_tree
+from helper.dom_parser import build_tree, crop_dom_tree_by_area, print_dom_tree, crop_empty_divs
 from helper.tree_gui import TreeDisplayApp
-from helper.visualize_elements import visualize_dom_tree
+from helper.visualize_elements import visualize_dom_tree, draw_boxes_wrapped
 from helper.windows_area import get_window_area
 import logging
 from pathlib import Path
@@ -139,7 +139,8 @@ class Controller:
 
         dom = collect_element_info(self.driver)
         dom_tree = build_tree(dom)
-        #dom_tree = crop_dom_tree(dom_tree, self.window_area, tolerance=10)
+        dom_tree = crop_dom_tree_by_area(dom_tree, self.window_area, tolerance=10)
+        dom_tree = crop_empty_divs(dom_tree)
         return dom_tree, dom
 
    
@@ -239,14 +240,11 @@ class Controller:
         # Get the current DOM
         
         dom_tree, dom = self.get_dom()
-        if not dom_tree:
-            print('xxx')
-        #print_dom_tree(dom_tree)
         
         # Append the screenshot to the screenshots list
         self.screenshots.append((image, dom_tree))
 
-        #visualization = visualize_dom_tree(image.copy(), dom_tree, self.viewport)
+        visualization = visualize_dom_tree(image.copy(), dom_tree, self.viewport)
         #visualization.show()
         
         # When x pairs of screenshots and DOMs have been taken
@@ -264,7 +262,7 @@ class Controller:
             # Clear the screenshots list
             self.screenshots.clear()
         
-        return (image, dom_tree, dom)
+        return (image, dom_tree, dom, visualization)
 
     def save_dom(self, dom):
         """Save the DOM to a file."""
@@ -287,6 +285,8 @@ class Controller:
         if keyboard.is_pressed('alt'):
             if event.name == 'f1':
                 self.reset_window_area()    
+            elif event.name == 'f2':
+                self.draw_boxes()
             elif event.name == 'f9':
                 self.update_window_area()
             elif event.name == 'f8':
@@ -302,11 +302,24 @@ class Controller:
         self.window_area = self.window_dimensions
         self.update_ui()
 
+    def draw_boxes(self):
+        """Draw boxes around all elements in the DOM tree."""
+        # Take a screenshot and get the DOM
+        image_folder_path = self.screenshot_folder / 'heir' / f'{int(time.time())}'
+        image_folder_path.mkdir(parents=True, exist_ok=True)
+        image = self.screenshot()
+        dom_tree, _ = self.get_dom()
+        # Draw the boxes
+        image_list = draw_boxes_wrapped(image.copy(), dom_tree, self.viewport)
+        for k, image_with_boxes in enumerate(image_list):
+            image_with_boxes.save(image_folder_path / 'screenshot_{:03d}.png'.format(k))
+            
+
     # Example function bindings
     def alt_f8(self):
         # Your code for F8 action
         image = self.screenshot_and_dom()
-        self.save_screenshot(image[0])
+        self.save_screenshot(image[3])
         self.save_dom(image[2])
         #x = build_tree(image[1])
         #TreeDisplayApp(x)

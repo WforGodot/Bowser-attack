@@ -11,3 +11,5 @@ Screenshot should only return selected area {cm:2023-11-21} {h}
 Update glossary to show window_area {cm:2023-11-22} {h}
 
 Record take ss on click
+get iframe traversal to work
+extract mask of png and canvas elements
